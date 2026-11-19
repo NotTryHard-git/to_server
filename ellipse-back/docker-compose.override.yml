@@ -1,0 +1,20 @@
+# ЛОКАЛЬНАЯ разработка. Подхватывается автоматически командой `docker compose up`.
+# На сервере НЕ используется (там: docker compose -f docker-compose.yml up -d).
+services:
+  backend:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    environment:
+      ENVIRONMENT: development
+      ENABLE_DOCS: "true"
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+
+  postgres:
+    ports:
+      - "5433:5432"
+
+  # Бэкапы в разработке не нужны: запускаются только с `--profile backup`
+  backup:
+    profiles: ["backup"]

@@ -1,0 +1,44 @@
+# Нужна уже созданная сеть ellipse-network (её создаёт запуск ellipse-back).
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN:?Укажите DOMAIN в .env}
+      # подставлять только DOMAIN, чтобы $host, $uri и т. д. остались нетронутыми
+      NGINX_ENVSUBST_FILTER: DOMAIN
+    volumes:
+      # bootstrap (только HTTP) на первый запуск, full — рабочий; переключает init-letsencrypt.sh
+      - ${NGINX_TEMPLATES:-./nginx/templates/full}:/etc/nginx/templates:ro
+      - ${FRONTEND_DIST_PATH:-./frontend-dist}:/usr/share/nginx/html:ro
+      - certbot-etc:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    networks:
+      - ellipse-network
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  # Продление сертификата: certbot проверяет раз в 12 часов, обновляет, когда до конца <30 дней
+  certbot:
+    image: certbot/certbot
+    restart: unless-stopped
+    volumes:
+      - certbot-etc:/etc/letsencrypt
+      - certbot-www:/var/www/certbot
+    entrypoint: >
+      /bin/sh -c "trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --deploy-hook 'touch /etc/letsencrypt/.renewed'; sleep 12h & wait $${!}; done;"
+    networks:
+      - ellipse-network
+
+networks:
+  ellipse-network:
+    external: true
+    name: ellipse-network
+
+volumes:
+  certbot-etc:
+  certbot-www:

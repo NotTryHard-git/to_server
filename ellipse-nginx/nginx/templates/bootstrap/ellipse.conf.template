@@ -1,0 +1,15 @@
+# ВРЕМЕННЫЙ конфиг первого запуска: только HTTP для проверки домена Let's Encrypt.
+# HTTPS здесь нет намеренно — сертификатов ещё нет, nginx с ними не стартовал бы.
+server {
+    listen 80;
+    server_name ${DOMAIN} www.${DOMAIN} api.${DOMAIN} sync.${DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        default_type text/plain;
+        return 200 "nginx: ожидание выпуска сертификата...\n";
+    }
+}

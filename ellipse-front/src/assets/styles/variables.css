@@ -1,0 +1,19 @@
+:root {
+  /* Typography */
+  --font-family-base: 'Montserrat', sans-serif;
+
+  /* Layout */
+  --header-height: 200px;
+
+  /* Header / Footer */
+  --color-header-footer-bg-glass: rgba(0, 0, 0, 0.95);
+  --color-header-footer-bg: #000000;
+  --color-header-footer-accent: #d4af37;
+  --color-header-footer-text: #f0e4c1;
+
+  /* Main content */
+  --color-main-bg: #ebe2d3;
+  --color-main-text: #000000;
+  --color-main-accent: #d4af37;
+}
+/*#f7e7e1; Monserrate #e8b4bc*/

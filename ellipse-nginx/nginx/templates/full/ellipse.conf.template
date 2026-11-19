@@ -1,0 +1,163 @@
+# Рабочий конфиг. ${DOMAIN} подставляется из .env при старте контейнера.
+
+# --- общие настройки ---
+server_tokens off;
+resolver 127.0.0.11 valid=10s ipv6=off;   # DNS докер-сети: адрес сервисов берётся при запросе
+
+gzip on;
+gzip_comp_level 5;
+gzip_min_length 512;
+gzip_vary on;
+gzip_types text/plain text/css application/javascript application/json image/svg+xml;
+
+# Ограничения частоты запросов (на один IP)
+limit_req_zone $binary_remote_addr zone=api_zone:10m rate=20r/s;
+limit_req_zone $binary_remote_addr zone=sync_zone:10m rate=5r/s;
+limit_req_status 429;
+
+# --- HTTP: ACME challenge + редирект на HTTPS ---
+server {
+    listen 80;
+    server_name ${DOMAIN} www.${DOMAIN} api.${DOMAIN} sync.${DOMAIN};
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# --- www -> без www ---
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name www.${DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+
+    return 301 https://${DOMAIN}$request_uri;
+}
+
+# --- Фронтенд (Vue SPA) ---
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Все пути ведут на index.html — дальше маршрутизирует vue-router
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache";
+        add_header Strict-Transport-Security "max-age=31536000" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    }
+
+    # Файлы с хэшем в имени (Vite) — кэшируем надолго
+    location /assets/ {
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    # Прочая статика (баннеры из public/ и т. п.)
+    location ~* \.(png|jpe?g|webp|svg|gif|ico|woff2?)$ {
+        try_files $uri =404;
+        expires 30d;
+        add_header Cache-Control "public";
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+}
+
+# --- ellipse-back (API + /media) ---
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name api.${DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options "nosniff" always;
+
+    client_max_body_size 20m;
+    limit_req zone=api_zone burst=40 nodelay;
+
+    # Картинки (STORAGE_BACKEND=local): backend отдаёт файл, nginx кэширует в браузере
+    location /media/ {
+        set $backend http://backend:8000;
+        proxy_pass $backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        expires 30d;
+        add_header Cache-Control "public";
+        add_header X-Content-Type-Options "nosniff" always;
+    }
+
+    # Внутренние эндпоинты backend не должны быть видны снаружи:
+    # sync ходит к ним по docker-сети напрямую, минуя nginx
+    location /internal/ {
+        return 404;
+    }
+
+    location / {
+        set $backend http://backend:8000;
+        proxy_pass $backend;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+}
+
+# --- ellipse-sync (сюда стучится 1С) ---
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name sync.${DOMAIN};
+
+    ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+
+    # Должно быть не меньше MAX_BODY_BYTES в .env ellipse-sync
+    client_max_body_size 10m;
+    limit_req zone=sync_zone burst=10 nodelay;
+
+    # Если 1С ходит с фиксированного IP — раскомментируйте и впишите его:
+    # allow 203.0.113.10;
+    # deny all;
+
+    location / {
+        set $sync http://sync:8001;
+        proxy_pass $sync;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 120s;
+        proxy_request_buffering on;
+    }
+}

@@ -1,0 +1,71 @@
+# БОЕВАЯ конфигурация. Локально `docker compose up` автоматически подмешивает
+# docker-compose.override.yml (reload, открытые порты); на сервере запускайте так:
+#     docker compose -f docker-compose.yml up -d --build
+services:
+  backend:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Внутри docker-сети база — всегда сервис postgres, что бы ни стояло в .env
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+    volumes:
+      - media_data:/mnt/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/ready', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    expose:
+      - "8000"
+    networks:
+      - default
+      - ellipse-network
+
+  postgres:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    # Порт наружу НЕ публикуется: к базе ходит только backend (и backup) по внутренней сети
+
+  # Ежедневный дамп базы (+ необязательная выгрузка в S3). Подробности: backup/backup_loop.sh
+  backup:
+    build: ./backup
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB}
+    volumes:
+      - db_backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  media_data:
+  db_backups:
+
+networks:
+  # Общая сеть backend / sync / nginx. Создаётся при первом запуске этого проекта;
+  # ellipse-sync и ellipse-nginx подключаются к ней как к внешней.
+  ellipse-network:
+    name: ellipse-network

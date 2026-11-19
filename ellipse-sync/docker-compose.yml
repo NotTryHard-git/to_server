@@ -1,0 +1,22 @@
+# БОЕВАЯ конфигурация:  docker compose -f docker-compose.yml up -d --build
+# Требует, чтобы сеть ellipse-network уже существовала (создаётся запуском ellipse-back).
+services:
+  sync:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "8001"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - ellipse-network
+
+networks:
+  ellipse-network:
+    external: true
+    name: ellipse-network
